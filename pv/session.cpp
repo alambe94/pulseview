@@ -1289,8 +1289,8 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 		if (e.result == SR_ERR_ARG && cur_samplerate_ == 500000000 && hw_device &&
 			hw_device->hardware_device()->driver()->name() == "xsdk-xlogic" &&
 			hw_device->hardware_device()->connection_id().find("winusb/") == 0) {
-			error_handler(tr("%1\n\nCheck the channel selection: for 500 MS/s USB capture, enable D0–D3 only. "
-				"Some devices also support D4–D7 instead.").arg(e.what()));
+			error_handler(tr("%1\n\nCheck the channel selection: for 500 MS/s USB capture, "
+				"enable one supported group only: D0–D3 or D4–D7.").arg(e.what()));
 		} else {
 			error_handler(e.what());
 		}
