@@ -87,7 +87,7 @@ QString GlobalSettings::default_style_;
 QPalette GlobalSettings::default_palette_;
 
 GlobalSettings::GlobalSettings() :
-	QSettings()
+	QSettings(QCoreApplication::applicationDirPath() + "/../pulseview.ini", QSettings::IniFormat)
 {
 	beginGroup("Settings");
 }
@@ -112,9 +112,9 @@ void GlobalSettings::set_defaults_where_needed()
 		apply_language();
 	}
 
-	// Use no theme by default
+	// Use the built-in dark theme by default.
 	if (!contains(Key_General_Theme))
-		setValue(Key_General_Theme, 0);
+		setValue(Key_General_Theme, 1);
 	if (!contains(Key_General_Style))
 		setValue(Key_General_Style, "");
 
@@ -178,9 +178,13 @@ void GlobalSettings::set_defaults_where_needed()
 	if (!contains(Key_Log_NotifyOfStacktrace))
 		setValue(Key_Log_NotifyOfStacktrace, true);
 
-	// Default theme is bright, so use its color scheme if undefined
-	if (!contains(Key_View_CursorFillColor))
-		set_bright_theme_default_colors();
+	// Initialize waveform colors for the selected theme.
+	if (!contains(Key_View_CursorFillColor)) {
+		if (value(Key_General_Theme).toInt() == 0)
+			set_bright_theme_default_colors();
+		else
+			set_dark_theme_default_colors();
+	}
 }
 
 void GlobalSettings::set_bright_theme_default_colors()
