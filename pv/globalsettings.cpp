@@ -116,7 +116,7 @@ void GlobalSettings::set_defaults_where_needed()
 	if (!contains(Key_General_Theme))
 		setValue(Key_General_Theme, 1);
 	if (!contains(Key_General_Style))
-		setValue(Key_General_Style, "");
+		setValue(Key_General_Style, "Fusion");
 
 	// Save setup with .sr files by default
 	if (!contains(Key_General_SaveWithSetup))
