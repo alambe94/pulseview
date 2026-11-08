@@ -115,6 +115,7 @@ Connect::Connect(QWidget *parent, pv::DeviceManager &device_manager) :
 	tcp_config_layout->addSpacing(30);
 	tcp_config_layout->addWidget(new QLabel(tr("Protocol:")));
 	tcp_protocol_ = new QComboBox();
+	tcp_protocol_->addItem("xESK", QVariant("tcp-xesk/%1/%2"));
 	tcp_protocol_->addItem("Raw TCP", QVariant("tcp-raw/%1/%2"));
 	tcp_protocol_->addItem("VXI", QVariant("vxi/%1/%2"));
 	tcp_config_layout->addWidget(tcp_protocol_);
