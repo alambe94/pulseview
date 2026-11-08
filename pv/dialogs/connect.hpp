@@ -34,6 +34,8 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+class QRadioButton;
+
 using std::shared_ptr;
 
 namespace sigrok {
@@ -88,6 +90,7 @@ private:
 	QFormLayout form_layout_;
 
 	QComboBox drivers_;
+	QRadioButton *usb_selection_;
 
 	QWidget *serial_config_;
 	QComboBox serial_devices_, serial_baudrate_;

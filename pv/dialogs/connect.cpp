@@ -76,11 +76,21 @@ Connect::Connect(QWidget *parent, pv::DeviceManager &device_manager) :
 	groupbox_drv->setLayout(vbox_drv);
 	form_layout_.addRow(groupbox_drv);
 
-	QRadioButton *radiobtn_usb = new QRadioButton(tr("&USB"), this);
+	QRadioButton *radiobtn_auto = new QRadioButton(tr("&Automatic"), this);
+	usb_selection_ = new QRadioButton(tr("&USB"), this);
 	QRadioButton *radiobtn_serial = new QRadioButton(tr("Serial &Port"), this);
 	QRadioButton *radiobtn_tcp = new QRadioButton(tr("&TCP/IP"), this);
-
-	radiobtn_usb->setChecked(true);
+	auto update_auto_choice = [this, radiobtn_auto](int index) {
+		auto driver = drivers_.itemData(index).value<shared_ptr<Driver>>();
+		const bool is_xlogic = driver && driver->name() == "xsdk-xlogic";
+		radiobtn_auto->setVisible(is_xlogic);
+		if (is_xlogic)
+			radiobtn_auto->setChecked(true);
+		else if (radiobtn_auto->isChecked())
+			usb_selection_->setChecked(true);
+	};
+	connect(&drivers_, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+		this, update_auto_choice);
 
 	serial_config_ = new QWidget();
 	QHBoxLayout *serial_config_layout = new QHBoxLayout(serial_config_);
@@ -126,11 +136,14 @@ Connect::Connect(QWidget *parent, pv::DeviceManager &device_manager) :
 	device_list_.setMaximumHeight(device_list_.minimumSizeHint().height());
 
 	QVBoxLayout *vbox_if = new QVBoxLayout;
-	vbox_if->addWidget(radiobtn_usb);
+	vbox_if->addWidget(radiobtn_auto);
+	vbox_if->addWidget(usb_selection_);
 	vbox_if->addWidget(radiobtn_serial);
 	vbox_if->addWidget(serial_config_);
 	vbox_if->addWidget(radiobtn_tcp);
 	vbox_if->addWidget(tcp_config_);
+	usb_selection_->setChecked(true);
+	update_auto_choice(drivers_.currentIndex());
 
 	QGroupBox *groupbox_if = new QGroupBox(tr("Step 2: Choose the interface"));
 	groupbox_if->setLayout(vbox_if);
@@ -234,6 +247,8 @@ void Connect::scan_pressed()
 	assert(driver);
 
 	map<const ConfigKey *, VariantBase> drvopts;
+	if (driver->name() == "xsdk-xlogic" && usb_selection_->isChecked())
+		drvopts[ConfigKey::CONN] = Variant<ustring>::create("usb");
 
 	if (serial_config_->isEnabled()) {
 		QString serial;
@@ -273,8 +288,24 @@ void Connect::scan_pressed()
 	for (const shared_ptr<HardwareDevice>& device : devices) {
 		assert(device);
 
-		QString text = QString::fromStdString(device->display_name(device_manager_));
-		text += QString(" with %1 channels").arg(device->device()->channels().size());
+		QString text;
+		if (driver->name() == "xsdk-xlogic") {
+			auto hw = device->hardware_device();
+			QString connection = QString::fromStdString(hw->connection_id());
+			QString identity = QString::fromStdString(hw->serial_number());
+			if (identity.size() == 16 && identity.startsWith("XESK", Qt::CaseInsensitive))
+				identity = identity.mid(4);
+			if (identity.isEmpty())
+				identity = connection;
+			const bool ethernet = connection.startsWith("tcp-");
+			text = QString("xLOGIC %1 %2CH (%3)")
+				.arg(ethernet ? "ETH" : "USB")
+				.arg(device->device()->channels().size())
+				.arg(identity.toUpper());
+		} else {
+			text = QString::fromStdString(device->display_name(device_manager_));
+			text += QString(" with %1 channels").arg(device->device()->channels().size());
+		}
 
 		QListWidgetItem *const item = new QListWidgetItem(text, &device_list_);
 		item->setData(Qt::UserRole, QVariant::fromValue(device));
