@@ -79,6 +79,14 @@ Connect::Connect(QWidget *parent, pv::DeviceManager &device_manager) :
 	QRadioButton *radiobtn_usb = new QRadioButton(tr("&USB"), this);
 	QRadioButton *radiobtn_serial = new QRadioButton(tr("Serial &Port"), this);
 	QRadioButton *radiobtn_tcp = new QRadioButton(tr("&TCP/IP"), this);
+	auto update_auto_label = [this, radiobtn_usb](int index) {
+		auto driver = drivers_.itemData(index).value<shared_ptr<Driver>>();
+		radiobtn_usb->setText(driver && driver->name() == "xsdk-xlogic" ?
+			tr("Automatic discovery (USB and Ethernet)") : tr("&USB"));
+	};
+	connect(&drivers_, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+		this, update_auto_label);
+	update_auto_label(drivers_.currentIndex());
 
 	radiobtn_usb->setChecked(true);
 
