@@ -21,12 +21,24 @@ jobs:
           ref: 398517bb2d2e5f7298c1f23eb8fc1a10bfd78ddd
           path: libsigrok-src
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: sigrokproject/libsigrokdecode
+          ref: 71f451443029322d57376214c330b518efd84f88
+          path: decode-src
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: sigrokproject/sigrok-cli
+          ref: f44dd91347e7ac797cefc23162b9fcf0b7329f1f
+          path: cli-src
+          persist-credentials: false
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
           install: >-
-            autoconf automake libtool make autoconf-archive
+            autoconf automake libtool make autoconf-archive curl unzip python
             mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-glibmm mingw-w64-ucrt-x86_64-libusb
@@ -43,36 +55,87 @@ jobs:
           make -j2
           make install
           pkg-config --modversion libsigrokcxx
+      - name: Build protocol decoding and sigrok-cli
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o python.nupkg https://api.nuget.org/v3-flatcontainer/python/3.14.5/python.3.14.5.nupkg
+          echo '03ad5810986afd8273a34a28c15cb594300ba7f4749f24362d69206fa1b6ac15  python.nupkg' | sha256sum -c -
+          unzip -q python.nupkg 'tools/*' -d cpython
+          mkdir -p /ucrt64/include/cpython314
+          cp -r cpython/tools/include/. /ucrt64/include/cpython314/
+          cp cpython/tools/libs/python314.lib /ucrt64/lib/libpython314.dll.a
+          cp cpython/tools/python314.dll /ucrt64/bin/
+          cat > /ucrt64/lib/pkgconfig/python3-embed.pc <<'PC'
+          prefix=${pcfiledir}/../..
+          Name: Python
+          Description: Embedded CPython for Win64
+          Version: 3.14.5
+          Cflags: -I${prefix}/include/cpython314
+          Libs: -L${prefix}/lib -lpython314
+          PC
+          cd decode-src
+          NOCONFIGURE=1 ./autogen.sh
+          PYTHON3=/usr/bin/python3 ./configure --prefix=/ucrt64
+          make -j2
+          make install
+          cd ../cli-src
+          NOCONFIGURE=1 ./autogen.sh
+          ./configure --prefix=/ucrt64
+          make -j2
+          make install
       - name: Build Windows PulseView
         run: |
           set -eu
-          cmake -S . -B pv-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISABLE_WERROR=ON -DENABLE_DECODE=OFF -DENABLE_TESTS=OFF
+          cmake -S . -B pv-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDISABLE_WERROR=ON -DENABLE_DECODE=ON -DENABLE_TESTS=OFF
           cmake --build pv-build --target pulseview --parallel 2
-          mkdir -p artifact
-          cp pv-build/pulseview.exe artifact/
+          mkdir -p artifact/bin/platforms artifact/share artifact/licenses
+          cp pv-build/pulseview.exe /ucrt64/bin/sigrok-cli.exe artifact/bin/
+          cp cpython/tools/{python3.dll,python314.dll,vcruntime140*.dll} artifact/bin/
+          cp -r cpython/tools/{Lib,DLLs} artifact/bin/
+          find artifact/bin/Lib -name '*.pyc' -delete
+          printf '%s\n' Lib DLLs > artifact/bin/python314._pth
+          mv /ucrt64/share/libsigrokdecode artifact/share/
+          find artifact/share -name '*.pyc' -delete
           plugin=$(pacman -Ql mingw-w64-ucrt-x86_64-qt5-base | awk '$2 ~ /\/platforms\/qwindows\.dll$/ {print $2}')
-          mkdir -p artifact/platforms artifact/licenses
-          cp "$plugin" artifact/platforms/
+          cp "$plugin" artifact/bin/platforms/
           cp COPYING artifact/licenses/PulseView.txt
           cp libsigrok-src/COPYING artifact/licenses/libsigrok.txt
-          queue=(artifact/pulseview.exe artifact/platforms/qwindows.dll)
+          cp decode-src/COPYING artifact/licenses/libsigrokdecode.txt
+          cp cli-src/COPYING artifact/licenses/sigrok-cli.txt
+          cp cpython/tools/LICENSE.txt artifact/licenses/CPython.txt
+          queue=(artifact/bin/pulseview.exe artifact/bin/sigrok-cli.exe artifact/bin/platforms/qwindows.dll)
           for ((i=0; i<${#queue[@]}; ++i)); do
             while read -r dll; do
-              if [[ -f "/ucrt64/bin/$dll" && ! -f "artifact/$dll" ]]; then
-                cp "/ucrt64/bin/$dll" artifact/
-                queue+=("artifact/$dll")
+              if [[ -f "/ucrt64/bin/$dll" && ! -f "artifact/bin/$dll" ]]; then
+                cp "/ucrt64/bin/$dll" artifact/bin/
+                queue+=("artifact/bin/$dll")
               fi
             done < <(objdump -p "${queue[i]}" | awk '/DLL Name:/ {print $3}' | tr -d '\r')
           done
           cp -r /ucrt64/share/licenses/mingw-w64-* artifact/licenses/ 2>/dev/null || true
-      - name: Smoke test the staged Windows executable
+      - name: Verify the packaged GUI and decode a UART byte
         shell: pwsh
         run: |
           $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
-          $env:QT_PLUGIN_PATH = $null
-          $exe = (Resolve-Path artifact/pulseview.exe).Path
+          foreach ($key in 'QT_PLUGIN_PATH','PYTHONHOME','PYTHONPATH','SIGROKDECODE_DIR','XDG_DATA_DIRS') {
+            Remove-Item "Env:$key" -ErrorAction SilentlyContinue
+          }
+          $exe = (Resolve-Path artifact/bin/pulseview.exe).Path
+          $cli = (Resolve-Path artifact/bin/sigrok-cli.exe).Path
+          Set-Location $env:RUNNER_TEMP
           $p = Start-Process -FilePath $exe -ArgumentList '--version' -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "PulseView exited with $($p.ExitCode)" }
+          & $cli --version
+          if ($LASTEXITCODE) { throw "sigrok-cli exited with $LASTEXITCODE" }
+          # Idle, start, eight data bits (0x41 LSB first), stop, idle.
+          [byte[]]$samples = foreach ($bit in 1,1,0,1,0,0,0,0,0,1,0,1,1) {
+            foreach ($sample in 1..10) { $bit }
+          }
+          $capture = Join-Path $env:RUNNER_TEMP uart.bin
+          [IO.File]::WriteAllBytes($capture, $samples)
+          $result = & $cli -i $capture -I binary:numchannels=1:samplerate=1000000 -P uart:rx=0:baudrate=100000 -A uart=rx-data
+          $result
+          if ($LASTEXITCODE -ne 0 -or -not ($result -match ':\s*41\s*$')) { throw 'Expected decoded UART byte 41' }
       - uses: actions/upload-artifact@v4
         with:
           name: pulseview-xlogic-windows-x64-pilot
