@@ -50,8 +50,29 @@ jobs:
           cmake --build pv-build --target pulseview --parallel 2
           mkdir -p artifact
           cp pv-build/pulseview.exe artifact/
-          windeployqt --release artifact/pulseview.exe
-          ldd artifact/pulseview.exe | awk '$3 ~ /^\/ucrt64\/bin\// {print $3}' | sort -u | xargs -r -I '{}' cp -u '{}' artifact/
+          plugin=$(pacman -Ql mingw-w64-ucrt-x86_64-qt5-base | awk '$2 ~ /\/platforms\/qwindows\.dll$/ {print $2}')
+          mkdir -p artifact/platforms artifact/licenses
+          cp "$plugin" artifact/platforms/
+          cp COPYING artifact/licenses/PulseView.txt
+          cp libsigrok-src/COPYING artifact/licenses/libsigrok.txt
+          queue=(artifact/pulseview.exe artifact/platforms/qwindows.dll)
+          for ((i=0; i<${#queue[@]}; ++i)); do
+            while read -r dll; do
+              if [[ -f "/ucrt64/bin/$dll" && ! -f "artifact/$dll" ]]; then
+                cp "/ucrt64/bin/$dll" artifact/
+                queue+=("artifact/$dll")
+              fi
+            done < <(objdump -p "${queue[i]}" | awk '/DLL Name:/ {print $3}' | tr -d '\r')
+          done
+          cp -r /ucrt64/share/licenses/mingw-w64-* artifact/licenses/ 2>/dev/null || true
+      - name: Smoke test the staged Windows executable
+        shell: pwsh
+        run: |
+          $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+          $env:QT_PLUGIN_PATH = $null
+          $exe = (Resolve-Path artifact/pulseview.exe).Path
+          $p = Start-Process -FilePath $exe -ArgumentList '--version' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "PulseView exited with $($p.ExitCode)" }
       - uses: actions/upload-artifact@v4
         with:
           name: pulseview-xlogic-windows-x64-pilot
